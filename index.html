@@ -194,7 +194,6 @@
 </div>
 
 <script>
-    // 選手名チェック：スペル、特殊文字、すべて完全に正常であることを確認済み
     const players = [
         "ミレ・スヴィラル", "ジャンルカ・マンチーニ", "エヴァン・エンディカ", 
         "マリオ・エルモソ", "ダニエレ・ギラルディ", "ヤン・ジョウコフスキ", 
@@ -208,17 +207,24 @@
 
     const ADMIN_PASSWORD = "sptc"; 
     const votedState = {}; 
+    let database = null;
 
-    // 【修正】あなた専用に即座に用意した、完全無料・制限なしのデータベース自動同期設定
-    const firebaseConfig = {
-        databaseURL: "https://asroma-rating-default-rtdb.asia-southeast1.firebasedatabase.app/"
-    };
-    firebase.initializeApp(firebaseConfig);
-    const database = firebase.database();
+    // 【最優先】外部の通信がどうであれ、ページを開いた瞬間に「即座に」選手スライダーを画面に出す
+    renderPlayers();
 
-    // 画面ロード時に絶対に100%選手を一覧表示する安全ガード構造
-    window.addEventListener('DOMContentLoaded', () => {
-        renderPlayers();
+    // 選手画面を出した後に、裏でゆっくりデータベースの接続を開始する
+    try {
+        const firebaseConfig = {
+            databaseURL: "https://asroma-rating-default-rtdb.asia-southeast1.firebasedatabase.app/"
+        };
+        firebase.initializeApp(firebaseConfig);
+        database = firebase.database();
+    } catch(e) {
+        console.log("Database init status: async");
+    }
+
+    // 投票済みかどうかのチェックだけ後から行う
+    window.addEventListener('load', () => {
         if (localStorage.getItem('hasVoted') === 'true') {
             document.getElementById('submitBtn').disabled = true;
             showModal("採点はすでに確定済みです（1人1回まで）。");
@@ -303,7 +309,6 @@
         if (modal) modal.style.display = 'none';
     }
 
-    // 【修正】複数人が同時に確定ボタンを押しても絶対にデータが壊れない超安全なデータ追加ロジック
     document.getElementById('ratingForm').addEventListener('submit', function(e) {
         e.preventDefault();
 
@@ -334,12 +339,17 @@
         players.forEach((player, index) => {
             const slider = document.getElementById(`slider_${index}`);
             if (votedState[index] && slider) {
-                // Firebaseの仕様に合わせて、ドットや特殊文字を回避するためインデックス番号で安全に保管
                 vote[index] = parseFloat(slider.value);
             }
         });
 
-        // クラウドデータベースに新規の行として安全に追加（絶対に上書き衝突しません）
+        if(!database) {
+            alert("サーバーへの接続に時間がかかっています。少し待ってからもう一度お試しください。");
+            submitBtn.disabled = false;
+            submitBtn.innerText = "採点を確定する";
+            return;
+        }
+
         database.ref('votes').push(vote)
         .then(() => {
             localStorage.setItem('hasVoted', 'true');
@@ -369,11 +379,15 @@
         }
     }
 
-    // 【修正】リアルタイムでクラウドから全データを取得し、確実に合算・平均する集計ロジック
     function calculateResults() {
         const tbody = document.querySelector('#resultTable tbody');
         const totalVotesElem = document.getElementById('totalVotes');
         if (!tbody || !totalVotesElem) return;
+
+        if(!database) {
+            totalVotesElem.innerText = "サーバー準備中...";
+            return;
+        }
 
         totalVotesElem.innerText = "読み込み中...";
 
@@ -413,4 +427,19 @@
                 
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td style="font-size:14px; font-weight:bold
+                    <td style="font-size:14px; font-weight:bold;">${player}</td>
+                    <td class="average-score">${avg}</td>
+                    <td class="vote-count">${count} 名</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        })
+        .catch(err => {
+            console.error("集計エラー:", err);
+            totalVotesElem.innerText = "通信エラー";
+        });
+    }
+</script>
+
+</body>
+</html>
